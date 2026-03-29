@@ -1,8 +1,4 @@
-FROM python:3.12-slim
-
-# No interactive prompts
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+﻿FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -11,5 +7,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Cloud Run invokes the container — script runs and exits
-CMD ["python", "main.py"]
+EXPOSE 8080
+CMD [\"gunicorn\", \"main:app\", \"--bind\", \"0.0.0.0:8080\", \"--workers\", \"2\", \"--timeout\", \"120\"]
