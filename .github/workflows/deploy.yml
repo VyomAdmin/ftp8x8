@@ -51,7 +51,12 @@ jobs:
           docker push $IMAGE:$GITHUB_SHA
           docker push $IMAGE:latest
 
-      # ── 6. Deploy to Cloud Run (Job — runs on schedule, not HTTP) ────────────
+      # ── 6. Remove legacy Cloud Run service if present ─────────────────────────
+      - name: Remove legacy Cloud Run service
+        run: |
+          gcloud run services delete ftp8x8 --region $REGION --platform managed --quiet || true
+
+      # ── 7. Deploy to Cloud Run (Job — runs on schedule, not HTTP) ─────────────
       - name: Deploy Cloud Run Job
         run: |
           gcloud run jobs deploy $SERVICE_NAME \
