@@ -1,26 +1,29 @@
 steps:
+  # Step 1 — Build image
   - name: 'gcr.io/cloud-builders/docker'
     args:
-      - build
-      - -t
+      - 'build'
+      - '-t'
       - 'us-central1-docker.pkg.dev/psychic-lens-456414-e4/ftp8x8/ftp8x8:$COMMIT_SHA'
-      - .
+      - '.'
 
+  # Step 2 — Push image
   - name: 'gcr.io/cloud-builders/docker'
     args:
-      - push
+      - 'push'
       - 'us-central1-docker.pkg.dev/psychic-lens-456414-e4/ftp8x8/ftp8x8:$COMMIT_SHA'
 
+  # Step 3 — Update the Job (NOT deploy service)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
-      - run
-      - jobs
-      - update
-      - ftp8x8-calls-job
-      - --image=us-central1-docker.pkg.dev/psychic-lens-456414-e4/ftp8x8/ftp8x8:$COMMIT_SHA
-      - --region=us-central1
-      - --project=psychic-lens-456414-e4
+      - 'run'
+      - 'jobs'          # ✅ jobs, not services
+      - 'update'        # ✅ update, not deploy
+      - 'ftp8x8-calls-job'
+      - '--image=us-central1-docker.pkg.dev/psychic-lens-456414-e4/ftp8x8/ftp8x8:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--project=psychic-lens-456414-e4'
 
 images:
   - 'us-central1-docker.pkg.dev/psychic-lens-456414-e4/ftp8x8/ftp8x8:$COMMIT_SHA'
