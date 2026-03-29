@@ -56,12 +56,14 @@ jobs:
         run: |
           gcloud run services delete ftp8x8 --region $REGION --platform managed --quiet || true
 
-      # ── 7. Deploy to Cloud Run (Job — runs on schedule, not HTTP) ─────────────
-      - name: Deploy Cloud Run Job
+      # ── 7. Deploy to Cloud Run service ───────────────────────────────────────
+      - name: Deploy Cloud Run service
         run: |
-          gcloud run jobs deploy $SERVICE_NAME \
+          gcloud run deploy $SERVICE_NAME \
             --image $IMAGE:$GITHUB_SHA \
             --region $REGION \
+            --platform managed \
+            --allow-unauthenticated \
             --set-env-vars "FTP_HOST=${{ secrets.FTP_HOST }}" \
             --set-env-vars "FTP_PORT=${{ secrets.FTP_PORT }}" \
             --set-env-vars "FTP_USER=${{ secrets.FTP_USER }}" \
@@ -69,21 +71,23 @@ jobs:
             --set-env-vars "FTP_DIR=${{ secrets.FTP_DIR }}" \
             --set-env-vars "GDRIVE_FOLDER_ID=${{ secrets.GDRIVE_FOLDER_ID }}" \
             --set-env-vars "GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}" \
-            --max-retries 3 \
             --project $PROJECT_ID
 
-      # ── 7. Set up Cloud Scheduler to trigger daily ───────────────────────────
+      # ── 8. Set up Cloud Scheduler to trigger /sync daily ──────────────────────
       - name: Create / update Cloud Scheduler job
         run: |
           # Delete if exists (ignore error if it doesn't)
           gcloud scheduler jobs delete ftp8x8-daily \
             --location $REGION --quiet 2>/dev/null || true
 
+          SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region $REGION --platform managed --format='value(status.url)')
+
           gcloud scheduler jobs create http ftp8x8-daily \
             --location $REGION \
             --schedule "0 2 * * *" \
             --time-zone "Asia/Kolkata" \
-            --uri "https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$SERVICE_NAME:run" \
+            --uri "${SERVICE_URL}/sync" \
+            --http-method POST \
             --message-body "{}" \
             --oauth-service-account-email "${{ secrets.GCP_SCHEDULER_SA }}" \
             --project $PROJECT_ID
