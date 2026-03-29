@@ -1,0 +1,84 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main          # auto-deploy on every push to main
+
+env:
+  PROJECT_ID:   ${{ secrets.GCP_PROJECT_ID }}
+  REGION:       ${{ secrets.GCP_REGION }}          # e.g. us-central1
+  SERVICE_NAME: ftp8x8-sync
+  IMAGE:        gcr.io/${{ secrets.GCP_PROJECT_ID }}/ftp8x8-sync
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write   # needed for Workload Identity Federation (optional)
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Authenticate with GCP ─────────────────────────────────────────────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}   # Service-account JSON key
+
+      # ── 3. Set up Cloud SDK ──────────────────────────────────────────────────
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      # ── 4. Configure Docker for GCR ─────────────────────────────────────────
+      - name: Configure Docker
+        run: gcloud auth configure-docker --quiet
+
+      # ── 5. Build & push image ────────────────────────────────────────────────
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE:$GITHUB_SHA -t $IMAGE:latest .
+
+      - name: Push Docker image
+        run: |
+          docker push $IMAGE:$GITHUB_SHA
+          docker push $IMAGE:latest
+
+      # ── 6. Deploy to Cloud Run (Job — runs on schedule, not HTTP) ────────────
+      - name: Deploy Cloud Run Job
+        run: |
+          gcloud run jobs deploy $SERVICE_NAME \
+            --image $IMAGE:$GITHUB_SHA \
+            --region $REGION \
+            --set-env-vars "FTP_HOST=${{ secrets.FTP_HOST }}" \
+            --set-env-vars "FTP_PORT=${{ secrets.FTP_PORT }}" \
+            --set-env-vars "FTP_USER=${{ secrets.FTP_USER }}" \
+            --set-env-vars "FTP_PASSWORD=${{ secrets.FTP_PASSWORD }}" \
+            --set-env-vars "FTP_DIR=${{ secrets.FTP_DIR }}" \
+            --set-env-vars "GDRIVE_FOLDER_ID=${{ secrets.GDRIVE_FOLDER_ID }}" \
+            --set-env-vars "GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}" \
+            --max-retries 3 \
+            --project $PROJECT_ID
+
+      # ── 7. Set up Cloud Scheduler to trigger daily ───────────────────────────
+      - name: Create / update Cloud Scheduler job
+        run: |
+          # Delete if exists (ignore error if it doesn't)
+          gcloud scheduler jobs delete ftp8x8-daily \
+            --location $REGION --quiet 2>/dev/null || true
+
+          gcloud scheduler jobs create http ftp8x8-daily \
+            --location $REGION \
+            --schedule "0 2 * * *" \
+            --time-zone "Asia/Kolkata" \
+            --uri "https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$SERVICE_NAME:run" \
+            --message-body "{}" \
+            --oauth-service-account-email "${{ secrets.GCP_SCHEDULER_SA }}" \
+            --project $PROJECT_ID
