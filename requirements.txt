@@ -1,5 +1,3 @@
-﻿flask
-gunicorn
-paramiko
+﻿paramiko
 google-auth
 google-api-python-client

@@ -2,12 +2,9 @@
 import logging
 import os
 import tempfile
-import threading
-from datetime import datetime
 from pathlib import Path
 
 import paramiko
-from flask import Flask, jsonify
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -25,9 +22,6 @@ GDRIVE_FOLDER_ID = os.environ['GDRIVE_FOLDER_ID']
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')
 GOOGLE_CREDENTIALS_FILE = os.getenv('GOOGLE_CREDENTIALS_FILE', 'service_account.json')
 UPLOADED_LOG = os.getenv('UPLOADED_LOG', '/tmp/uploaded_files.log')
-
-sync_status = {'running': False, 'last_run': None, 'last_result': 'not_run'}
-app = Flask(__name__)
 
 
 def get_drive_service():
@@ -55,7 +49,7 @@ def save_to_uploaded_log(filename):
 
 def list_sftp_files(sftp):
     files = sftp.listdir()
-    logger.info(f"Found {len(files)} file(s) in SFTP dir '{FTP_DIR}'")
+    logger.info(f"Found {len(files)} file(s)")
     return files
 
 
@@ -77,81 +71,47 @@ def upload_to_drive(service, local_path, filename):
     return uploaded.get('id')
 
 
-def run_sync():
-    if sync_status['running']:
-        logger.info('Sync already running')
-        return
+def run():
+    logger.info('=== FTP → Google Drive sync started ===')
+    already_uploaded = load_uploaded_log()
+    drive_service = get_drive_service()
 
-    sync_status['running'] = True
-    sync_status['last_run'] = datetime.utcnow().isoformat() + 'Z'
-    sync_status['last_result'] = 'running'
-
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        already_uploaded = load_uploaded_log()
-        drive_service = get_drive_service()
-
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
+        ssh.connect(
+            hostname=FTP_HOST,
+            port=FTP_PORT,
+            username=FTP_USER,
+            password=FTP_PASSWORD,
+            timeout=30,
+        )
+        sftp = ssh.open_sftp()
         try:
-            logger.info(f"Connecting to SFTP: {FTP_HOST}:{FTP_PORT}")
-            ssh.connect(
-                hostname=FTP_HOST,
-                port=FTP_PORT,
-                username=FTP_USER,
-                password=FTP_PASSWORD,
-                timeout=30,
-            )
-            sftp = ssh.open_sftp()
-            try:
-                if FTP_DIR:
-                    sftp.chdir(FTP_DIR)
-                files = list_sftp_files(sftp)
+            if FTP_DIR:
+                sftp.chdir(FTP_DIR)
+            files = list_sftp_files(sftp)
 
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    for filename in files:
-                        if filename in already_uploaded:
-                            logger.info(f"Skipping '{filename}'")
-                            continue
-                        local_path = str(Path(tmpdir) / filename)
-                        try:
-                            download_file(sftp, filename, local_path)
-                            upload_to_drive(drive_service, local_path, filename)
-                            save_to_uploaded_log(filename)
-                        except Exception as e:
-                            logger.error(f"Failed to process '{filename}': {e}")
-            finally:
-                sftp.close()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for filename in files:
+                    if filename in already_uploaded:
+                        logger.info(f"Skipping '{filename}'")
+                        continue
+
+                    local_path = str(Path(tmpdir) / filename)
+                    try:
+                        download_file(sftp, filename, local_path)
+                        upload_to_drive(drive_service, local_path, filename)
+                        save_to_uploaded_log(filename)
+                    except Exception as e:
+                        logger.error(f"Failed '{filename}': {e}")
         finally:
-            ssh.close()
-
-        sync_status['last_result'] = 'success'
-    except Exception as e:
-        logger.exception('Sync failed')
-        sync_status['last_result'] = f'failure: {e}'
+            sftp.close()
     finally:
-        sync_status['running'] = False
+        ssh.close()
 
-
-@app.route('/', methods=['GET'])
-def health_check():
-    return jsonify({'status': 'ok'}), 200
-
-
-@app.route('/sync', methods=['POST'])
-def start_sync():
-    if sync_status['running']:
-        return jsonify({'status': 'already running'}), 409
-    thread = threading.Thread(target=run_sync, daemon=True)
-    thread.start()
-    return jsonify({'status': 'accepted'}), 202
-
-
-@app.route('/status', methods=['GET'])
-def status():
-    return jsonify(sync_status), 200
+    logger.info('=== Sync completed ===')
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+    run()
