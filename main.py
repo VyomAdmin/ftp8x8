@@ -310,7 +310,7 @@ def chunk_list(lst, size):
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def run():
     logger.info("╔══════════════════════════════════════════╗")
-    logger.info("║   8x8 → Google Drive sync started        ║")
+    logger.info("║   8x8 → Google Drive sync started.        ║")
     logger.info("╚══════════════════════════════════════════╝")
 
     yesterday   = datetime.utcnow() - timedelta(days=1)
